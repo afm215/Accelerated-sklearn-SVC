@@ -1,4 +1,4 @@
-# Accelerated-SVC
+# Accelerated-sklearn-SVC
 ## Description
 
 Repository for accelerated class wrappers for sklearn SVC.
