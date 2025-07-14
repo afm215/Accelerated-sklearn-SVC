@@ -58,7 +58,7 @@ def compute_kernel_matrix(X, gamma="scale", kernel="rbf"):
         print(f"\nStarting RBF kernel matrix computation on {X.device} with gamma={gamma}...")
         assert kernel in ["rbf", "linear", "mahalanobis"], "Kernel must be either 'rbf' or 'linear'."
         
-        sq_norms = torch.sum(X**2, dim=1, keepdim=True).cpu()
+        sq_norms = torch.sum(X**2, dim=1, keepdim=True)
 
         # assert torch.all(torch.abs(sq_norms - 1) < 1e-6), "Input features must be L2 normalized."
         if kernel == "mahalanobis":
@@ -71,20 +71,19 @@ def compute_kernel_matrix(X, gamma="scale", kernel="rbf"):
             return kernel_matrix.numpy(), gamma, covariance_matrix_inv
         
         
-        dot_products = torch.matmul(X, X.T).cpu()
+        dot_products = torch.matmul(X, X.T)
         if kernel == "linear":
             print("Using linear kernel, returning dot product matrix.")
-            return dot_products, None
+            return dot_products.cpu().numpy(), None
         
-        
-        sq_distances = sq_norms + sq_norms.T - 2* dot_products
-        # sq_distances_np = np.clip(sq_distances, a_min=0, a_max=None)
-        sq_distances_np = torch.clamp(sq_distances, min=0)
-
-        kernel_matrix = torch.exp(-gamma * sq_distances_np)
+        dot_products.mul_(-2).add_(sq_norms).add_(sq_norms.T).clamp_(min=0)  # equivalent to (sq_norms + sq_norms.T) - 2 * dot_products
+        kernel_matrix = dot_products
+        kernel_matrix.mul_(-gamma).exp_()  # Ensure non-negative distances and apply the exponential function to compute the RBF kernel
 
         print(f"Kernel matrix computation finished. Shape: {kernel_matrix.shape}")
-        return kernel_matrix.numpy(), gamma
+        return kernel_matrix.cpu().numpy(), gamma
+    
+
 def compute_kernel_matrix_cross(X1, X2, gamma=None,covariance_inv = None,  kernel="linear"):
     """
     Computes the RBF kernel matrix between rows of two tensors X1 and X2 on GPU.
@@ -114,11 +113,9 @@ def compute_kernel_matrix_cross(X1, X2, gamma=None,covariance_inv = None,  kerne
 
         X1 = X1.to("cuda" if torch.cuda.is_available() else "cpu")
         X2 = X2.to("cuda" if torch.cuda.is_available() else "cpu")
-
-        sq_norms1 = torch.sum(X1**2, dim=1, keepdim=True).cpu() # (n_samples1, 1)
-        sq_norms2 = torch.sum(X2**2, dim=1, keepdim=False).cpu() # (n_samples2,) -> (1, n_samples2) after broadcasting for addition
-
-        dot_products = torch.matmul(X1, X2.T).cpu() # (n_samples1, n_samples2)
+        sq_norms1 = torch.sum(X1**2, dim=1, keepdim=True)#.cpu() # (n_samples1, 1)
+        sq_norms2 = torch.sum(X2**2, dim=1, keepdim=False)# .cpu() # (n_samples2,) -> (1, n_samples2) after broadcasting for addition
+        dot_products = torch.matmul(X1, X2.T) # (n_samples1, n_samples2)
         if kernel == "mahalanobis":
             print("Using Mahalanobis kernel, computing cross distances...")
             if covariance_inv is None:
@@ -128,13 +125,15 @@ def compute_kernel_matrix_cross(X1, X2, gamma=None,covariance_inv = None,  kerne
             sq_distances = compute_cross_mahalanobis_distances_batched(X1, X2, covariance_inv) #compute_cross_mahalanobis_distances(X1, X2, covariance_inv)
         if kernel == "linear":
             print("Using linear kernel, returning dot product matrix.")
-            return dot_products.numpy()
+            return dot_products.cpu().numpy()
         assert gamma is not None, "Gamma must be provided for RBF kernel."
 
         # squared Euclidean distances: ||x1_i - x2_j||^2 = ||x1_i||^2 + ||x2_j||^2 - 2 * x1_i.T * x2_j
-        sq_distances = (sq_norms1 + sq_norms2) - 2 * dot_products
-        sq_distances = torch.clamp(sq_distances, min=0)
-
-        kernel_matrix = torch.exp(-gamma * sq_distances)
-        print(f"Cross-kernel matrix computation finished. Shape: {kernel_matrix.shape}")
-        return kernel_matrix.numpy()
+        if kernel == "rbf":
+            dot_products.mul_(-2).add_(sq_norms1).add_(sq_norms2.unsqueeze(0))  # equivalent to (sq_norms1 + sq_norms2) - 2 * dot_products
+            sq_distances = dot_products
+        kernel_matrix = sq_distances
+        kernel_matrix.clamp_(min=0)
+        kernel_matrix.mul_(-gamma)  # Ensure non-negative distances
+        kernel_matrix.exp_()  # Apply the exponential function to compute the RBF kernel
+        return kernel_matrix.cpu().numpy()

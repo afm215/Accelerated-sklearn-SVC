@@ -3,8 +3,8 @@ from kernels.utils import compute_kernel_matrix, compute_kernel_matrix_cross
 
 class SVCWrapper:
 
-    def __init__(self, kernel="linear", random_state=42):
-        self.model = SVC(kernel="precomputed", random_state=random_state, max_iter=10000)
+    def __init__(self, kernel="linear", random_state=42, class_weight = None):
+        self.model = SVC(kernel="precomputed", random_state=random_state, max_iter=10000, class_weight = class_weight)
         self.kernel = kernel
         self.gamma = None
         self.covariance_matrix_inv = None
